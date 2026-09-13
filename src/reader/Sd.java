@@ -24,13 +24,16 @@ import javax.microedition.io.file.FileSystemRegistry;
 public final class Sd {
 
     private static final String FOLDER = "Books/";
-    private static final String STATE = ".reader-state";
+    // No leading dot: Nokia FileConnection often refuses to create dot-files,
+    // which silently killed progress saving.
+    private static final String STATE = "reader_state.dat";
     private static final String HEX = "0123456789ABCDEF";
 
     private String baseUrl;
     private boolean available;
     private String problem;
     private String report = "";
+    private String lastIo = "(no save yet)";
 
     private FileConnection openFc;
     private InputStream openIn;
@@ -76,7 +79,7 @@ public final class Sd {
     public boolean isAvailable() { return available; }
     public String getProblem() { return problem; }
     public String getBaseUrl() { return baseUrl; }
-    public String getReport() { return report; }
+    public String getReport() { return report + "\nstate: " + lastIo; }
 
     private static Vector listRootsSafe() {
         Vector v = new Vector();
@@ -216,8 +219,10 @@ public final class Sd {
             DataInputStream din = new DataInputStream(in);
             byte[] b = new byte[size];
             din.readFully(b);
+            lastIo = "read ok (" + size + "B)";
             return b;
         } catch (Exception e) {
+            lastIo = "read ERR: " + e;
             return null;
         } finally {
             if (in != null) try { in.close(); } catch (IOException e) {}
@@ -238,8 +243,9 @@ public final class Sd {
             out = fc.openOutputStream();
             out.write(data);
             out.flush();
+            lastIo = "write ok (" + data.length + "B)";
         } catch (Exception e) {
-            // best effort; losing the bookmark is non-fatal
+            lastIo = "write ERR: " + e;
         } finally {
             if (out != null) try { out.close(); } catch (IOException e) {}
             closeFc(fc);
