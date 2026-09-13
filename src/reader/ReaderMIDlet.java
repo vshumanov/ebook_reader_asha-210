@@ -19,7 +19,7 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
 
     private List listScreen;
     private String[] books = new String[0];
-    private Command openCmd, refreshCmd, exitCmd;
+    private Command openCmd, refreshCmd, exitCmd, diagCmd;
 
     private ReaderCanvas canvas;
 
@@ -55,7 +55,8 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
     private void showNoCard() {
         Form f = new Form("No SD card");
         f.append(sd.getProblem() + "\n\nPut your .txt books in a \"Books\" folder "
-               + "on the memory card, then reopen.");
+               + "on the memory card, then reopen.\n\n--- diagnostic ---\n"
+               + sd.getReport());
         Command retry = new Command("Retry", Command.OK, 1);
         Command quit = new Command("Exit", Command.EXIT, 2);
         f.addCommand(retry);
@@ -88,9 +89,11 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
         }
         openCmd = new Command("Open", Command.ITEM, 1);
         refreshCmd = new Command("Refresh", Command.SCREEN, 2);
-        exitCmd = new Command("Exit", Command.EXIT, 3);
+        diagCmd = new Command("Diagnostics", Command.SCREEN, 3);
+        exitCmd = new Command("Exit", Command.EXIT, 4);
         listScreen.addCommand(openCmd);
         listScreen.addCommand(refreshCmd);
+        listScreen.addCommand(diagCmd);
         listScreen.addCommand(exitCmd);
         listScreen.setCommandListener(this);
         display.setCurrent(listScreen);
@@ -102,6 +105,12 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
             notifyDestroyed();
         } else if (c == refreshCmd) {
             showBookList();
+        } else if (c == diagCmd) {
+            Alert a = new Alert("Diagnostics",
+                    "found " + books.length + " book(s)\n" + sd.getReport(),
+                    null, AlertType.INFO);
+            a.setTimeout(Alert.FOREVER);
+            display.setCurrent(a, listScreen);
         } else if (c == openCmd || c == List.SELECT_COMMAND) {
             int idx = listScreen.getSelectedIndex();
             if (idx >= 0 && idx < books.length) {
@@ -119,7 +128,7 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
             boolean dark = (st != null) && st[2] == 1;
             canvas = new ReaderCanvas(this, sd, name, size, offset, fontIdx, dark);
             display.setCurrent(canvas);
-        } catch (IOException e) {
+        } catch (Exception e) {
             Alert a = new Alert("Error", "Could not open: " + e.getMessage(), null, AlertType.ERROR);
             a.setTimeout(Alert.FOREVER);
             display.setCurrent(a, listScreen);

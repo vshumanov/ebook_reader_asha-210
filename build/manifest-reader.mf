@@ -1,6 +1,6 @@
 Manifest-Version: 1.0
 MIDlet-Name: Asha Reader
-MIDlet-Version: 1.0.0
+MIDlet-Version: 1.0.1
 MIDlet-Vendor: Private
 MIDlet-1: Reader, , reader.ReaderMIDlet
 MicroEdition-Configuration: CLDC-1.1

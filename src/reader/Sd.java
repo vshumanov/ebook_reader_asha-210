@@ -3,6 +3,7 @@ package reader;
 import java.io.*;
 import java.util.Enumeration;
 import java.util.Vector;
+import javax.microedition.io.Connection;
 import javax.microedition.io.Connector;
 import javax.microedition.io.file.FileConnection;
 import javax.microedition.io.file.FileSystemRegistry;
@@ -10,32 +11,54 @@ import javax.microedition.io.file.FileSystemRegistry;
 /**
  * SD-card access via JSR-75 FileConnection. Books live in "Books/" on the
  * memory card as UTF-8 .txt (produced by the desktop converter from EPUB/PDF).
- * Reading state is a small file in the same folder.
  *
- * Keeps ONE input stream open at a time so the reader can stream a book
- * forward without reloading it. FileConnection is a protected API: the phone
- * will prompt for file access on first use ("Always allow" stops the prompts).
+ * URL hygiene: FileConnection URLs must be percent-encoded -- a space (a card
+ * root can be named "Memory card/") or a non-ASCII char (e.g. a Cyrillic book
+ * filename) is otherwise rejected with "Malformed URL". Every open goes through
+ * enc(). All opens also catch RuntimeException so a bad URL degrades to a
+ * clean error instead of crashing the app.
+ *
+ * FileConnection is a protected API: the phone prompts for file access on first
+ * use ("Always allow" stops the prompts).
  */
 public final class Sd {
 
     private static final String FOLDER = "Books/";
     private static final String STATE = ".reader-state";
+    private static final String HEX = "0123456789ABCDEF";
 
     private String baseUrl;
     private boolean available;
     private String problem;
+    private String report = "";
 
     private FileConnection openFc;
     private InputStream openIn;
 
     public Sd() {
-        String cardUrl = System.getProperty("fileconn.dir.memorycard");
-        if (cardUrl == null || cardUrl.length() == 0) {
-            cardUrl = pickCardRoot();
+        String prop = null;
+        try { prop = System.getProperty("fileconn.dir.memorycard"); } catch (Throwable t) {}
+
+        StringBuffer r = new StringBuffer();
+        r.append("memorycard=").append(prop == null ? "(null)" : prop).append("\n");
+
+        String cardUrl = (prop != null && prop.length() > 0) ? prop : null;
+        String chosenRoot = null;
+        Vector roots = listRootsSafe();
+        r.append("roots=");
+        for (int i = 0; i < roots.size(); i++) {
+            r.append("[").append((String) roots.elementAt(i)).append("]");
         }
+        r.append("\n");
         if (cardUrl == null) {
-            problem = (problem != null) ? problem : "No memory card found. Insert the SD card.";
+            chosenRoot = pickCardRoot(roots);
+            cardUrl = chosenRoot;
+        }
+
+        if (cardUrl == null) {
+            problem = "No memory card found. Insert the SD card.";
             available = false;
+            report = r.toString();
             return;
         }
         if (!cardUrl.startsWith("file:")) {
@@ -46,40 +69,75 @@ public final class Sd {
         }
         baseUrl = cardUrl + FOLDER;
         available = true;
+        r.append("base=").append(baseUrl);
+        report = r.toString();
     }
 
     public boolean isAvailable() { return available; }
     public String getProblem() { return problem; }
     public String getBaseUrl() { return baseUrl; }
+    public String getReport() { return report; }
 
-    private String pickCardRoot() {
-        Enumeration roots;
+    private static Vector listRootsSafe() {
+        Vector v = new Vector();
         try {
-            roots = FileSystemRegistry.listRoots();
-        } catch (Throwable t) {
-            problem = "FileConnection (JSR-75) unavailable on this device.";
-            return null;
-        }
-        String first = null, nonC = null;
-        while (roots != null && roots.hasMoreElements()) {
-            String r = (String) roots.nextElement();
-            if (first == null) first = r;
-            String low = r.toLowerCase();
-            if (low.indexOf("card") >= 0 || low.indexOf("mmc") >= 0
-                    || low.indexOf("memory") >= 0 || low.startsWith("e:")) {
-                return r;
+            Enumeration e = FileSystemRegistry.listRoots();
+            while (e != null && e.hasMoreElements()) {
+                v.addElement((String) e.nextElement());
             }
-            if (!low.startsWith("c:")) nonC = r;
+        } catch (Throwable t) {
+            // leave empty
         }
-        return (nonC != null) ? nonC : first;
+        return v;
     }
 
-    /** Names of .txt books in Books/ (empty if the folder is missing). */
+    private String pickCardRoot(Vector roots) {
+        String first = null, nonC = null;
+        for (int i = 0; i < roots.size(); i++) {
+            String rt = (String) roots.elementAt(i);
+            if (first == null) first = rt;
+            String low = rt.toLowerCase();
+            if (low.indexOf("card") >= 0 || low.indexOf("mmc") >= 0
+                    || low.indexOf("memory") >= 0 || low.startsWith("e:")) {
+                return rt;
+            }
+            if (!low.startsWith("c:")) nonC = rt;
+        }
+        if (nonC != null) return nonC;
+        return first;
+    }
+
+    /** Percent-encode a file URL: keep unreserved chars + '/' and ':', UTF-8 %XX the rest. */
+    private static String enc(String s) {
+        StringBuffer b = new StringBuffer();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '/' || c == ':' || c == '-' || c == '_' || c == '.' || c == '~') {
+                b.append(c);
+            } else {
+                byte[] bytes;
+                try { bytes = ("" + c).getBytes("UTF-8"); }
+                catch (Exception e) { bytes = new byte[] { (byte) c }; }
+                for (int k = 0; k < bytes.length; k++) {
+                    int v = bytes[k] & 0xff;
+                    b.append('%').append(HEX.charAt(v >> 4)).append(HEX.charAt(v & 0xf));
+                }
+            }
+        }
+        return b.toString();
+    }
+
+    private static Connection open(String url, int mode) throws IOException {
+        return Connector.open(enc(url), mode);
+    }
+
+    /** Names of .txt books in Books/ (empty if the folder is missing or unreadable). */
     public String[] listBooks() {
         Vector v = new Vector();
         FileConnection dir = null;
         try {
-            dir = (FileConnection) Connector.open(baseUrl, Connector.READ);
+            dir = (FileConnection) open(baseUrl, Connector.READ);
             if (dir.exists()) {
                 Enumeration e = dir.list();
                 while (e != null && e.hasMoreElements()) {
@@ -89,8 +147,8 @@ public final class Sd {
                     }
                 }
             }
-        } catch (IOException e) {
-            // treat as empty
+        } catch (Exception e) {
+            // treat as empty; report captured elsewhere
         } finally {
             closeFc(dir);
         }
@@ -102,8 +160,10 @@ public final class Sd {
     public long size(String name) throws IOException {
         FileConnection fc = null;
         try {
-            fc = (FileConnection) Connector.open(baseUrl + name, Connector.READ);
+            fc = (FileConnection) open(baseUrl + name, Connector.READ);
             return fc.exists() ? fc.fileSize() : 0;
+        } catch (RuntimeException e) {
+            throw new IOException("bad path: " + e.getMessage());
         } finally {
             closeFc(fc);
         }
@@ -112,20 +172,23 @@ public final class Sd {
     /** Open (or reopen) a book for forward streaming, positioned at byteOffset. */
     public void openStream(String name, long byteOffset) throws IOException {
         closeStream();
-        openFc = (FileConnection) Connector.open(baseUrl + name, Connector.READ);
-        openIn = openFc.openInputStream();
+        try {
+            openFc = (FileConnection) open(baseUrl + name, Connector.READ);
+            openIn = openFc.openInputStream();
+        } catch (RuntimeException e) {
+            throw new IOException("bad path: " + e.getMessage());
+        }
         skipFully(openIn, byteOffset);
     }
 
-    /** Read up to len more bytes from the open stream; returns the actual bytes (may be shorter, empty at EOF). */
     public byte[] readMore(int len) throws IOException {
         if (openIn == null) return new byte[0];
         byte[] tmp = new byte[len];
         int got = 0;
         while (got < len) {
-            int r = openIn.read(tmp, got, len - got);
-            if (r < 0) break;
-            got += r;
+            int rd = openIn.read(tmp, got, len - got);
+            if (rd < 0) break;
+            got += rd;
         }
         if (got == len) return tmp;
         byte[] out = new byte[got];
@@ -146,7 +209,7 @@ public final class Sd {
         FileConnection fc = null;
         InputStream in = null;
         try {
-            fc = (FileConnection) Connector.open(baseUrl + STATE, Connector.READ);
+            fc = (FileConnection) open(baseUrl + STATE, Connector.READ);
             if (!fc.exists()) return null;
             int size = (int) fc.fileSize();
             in = fc.openInputStream();
@@ -154,7 +217,7 @@ public final class Sd {
             byte[] b = new byte[size];
             din.readFully(b);
             return b;
-        } catch (IOException e) {
+        } catch (Exception e) {
             return null;
         } finally {
             if (in != null) try { in.close(); } catch (IOException e) {}
@@ -166,16 +229,16 @@ public final class Sd {
         FileConnection fc = null;
         OutputStream out = null;
         try {
-            fc = (FileConnection) Connector.open(baseUrl, Connector.READ_WRITE);
+            fc = (FileConnection) open(baseUrl, Connector.READ_WRITE);
             if (!fc.exists()) fc.mkdir();
             closeFc(fc); fc = null;
-            fc = (FileConnection) Connector.open(baseUrl + STATE, Connector.READ_WRITE);
+            fc = (FileConnection) open(baseUrl + STATE, Connector.READ_WRITE);
             if (fc.exists()) fc.delete();
             fc.create();
             out = fc.openOutputStream();
             out.write(data);
             out.flush();
-        } catch (IOException e) {
+        } catch (Exception e) {
             // best effort; losing the bookmark is non-fatal
         } finally {
             if (out != null) try { out.close(); } catch (IOException e) {}
@@ -187,7 +250,7 @@ public final class Sd {
         while (n > 0) {
             long s = in.skip(n);
             if (s <= 0) {
-                if (in.read() < 0) break;   // EOF
+                if (in.read() < 0) break;
                 s = 1;
             }
             n -= s;
