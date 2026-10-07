@@ -82,7 +82,7 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
         listScreen = new List("Books", List.IMPLICIT);
         books = sd.listBooks();
         for (int i = 0; i < books.length; i++) {
-            listScreen.append(display(books[i]), null);
+            listScreen.append(label(books[i]), null);
         }
         if (books.length == 0) {
             listScreen.append("(no books - add .txt to Books/ on card)", null);
@@ -136,8 +136,8 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
     }
 
     /** Called by the canvas whenever position/font/theme changes. */
-    public void savePosition(String name, long offset, int fontIdx, boolean dark) {
-        state.put(name, new long[] { offset, fontIdx, dark ? 1 : 0 });
+    public void savePosition(String name, long offset, int fontIdx, boolean dark, boolean done) {
+        state.put(name, new long[] { offset, fontIdx, dark ? 1 : 0, done ? 1 : 0 });
         saveState();
     }
 
@@ -148,13 +148,19 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
         if (data == null) return;
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
-            int n = in.readInt();
+            // v1 begins with a positive count; v2+ begins with a negative
+            // version marker so we can add fields without losing old progress.
+            int first = in.readInt();
+            int version, n;
+            if (first < 0) { version = -first; n = in.readInt(); }
+            else { version = 1; n = first; }
             for (int i = 0; i < n; i++) {
                 String name = in.readUTF();
                 long offset = in.readLong();
                 int fontIdx = in.readByte();
                 int dark = in.readByte();
-                state.put(name, new long[] { offset, fontIdx, dark });
+                int done = (version >= 2) ? in.readByte() : 0;
+                state.put(name, new long[] { offset, fontIdx, dark, done });
             }
         } catch (IOException e) {
             // ignore a corrupt state file
@@ -165,6 +171,7 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
         try {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             DataOutputStream out = new DataOutputStream(bos);
+            out.writeInt(-2);                  // v2 marker (see loadState)
             out.writeInt(state.size());
             java.util.Enumeration keys = state.keys();
             while (keys.hasMoreElements()) {
@@ -174,12 +181,28 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
                 out.writeLong(st[0]);
                 out.writeByte((int) st[1]);
                 out.writeByte((int) st[2]);
+                out.writeByte(st.length > 3 ? (int) st[3] : 0);
             }
             out.flush();
             sd.writeState(bos.toByteArray());
         } catch (IOException e) {
             // best effort
         }
+    }
+
+    /** List entry: book name plus "(done)" or "(NN%)" once it has been opened. */
+    private String label(String file) {
+        String base = display(file);
+        long[] st = (long[]) state.get(file);
+        if (st == null) return base + "  (new)";        // never opened
+        if (st.length > 3 && st[3] == 1) return base + "  (done)";
+        long size = 0;
+        try { size = sd.size(file); } catch (Exception e) {}
+        if (size <= 0) return base;
+        long pct = st[0] * 100L / size;
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        return base + "  (" + pct + "%)";
     }
 
     private static String display(String file) {

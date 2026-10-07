@@ -116,7 +116,7 @@ public final class ReaderCanvas extends Canvas implements CommandListener {
             }
             status = "";
             repaint();
-            mid.savePosition(name, book.getPageStart(), fontIdx, dark);
+            mid.savePosition(name, book.getPageStart(), fontIdx, dark, !book.hasNext());
         } catch (IOException e) {
             flash("read error");
         }
@@ -130,7 +130,7 @@ public final class ReaderCanvas extends Canvas implements CommandListener {
         try {
             book.relayout(new FontMeasure(font), maxWidth(), maxLines());
             repaint();
-            mid.savePosition(name, book.getPageStart(), fontIdx, dark);
+            mid.savePosition(name, book.getPageStart(), fontIdx, dark, !book.hasNext());
         } catch (IOException e) {
             flash("read error");
         }
@@ -139,7 +139,7 @@ public final class ReaderCanvas extends Canvas implements CommandListener {
     private void toggleTheme() {
         dark = !dark;
         repaint();
-        mid.savePosition(name, book.getPageStart(), fontIdx, dark);
+        mid.savePosition(name, book.getPageStart(), fontIdx, dark, !book.hasNext());
     }
 
     private void flash(String s) {
@@ -150,7 +150,7 @@ public final class ReaderCanvas extends Canvas implements CommandListener {
     public void commandAction(Command c, Displayable d) {
         if (c == backCmd) {
             book.close();
-            mid.savePosition(name, book.getPageStart(), fontIdx, dark);
+            mid.savePosition(name, book.getPageStart(), fontIdx, dark, !book.hasNext());
             mid.showBookList();
         } else if (c == biggerCmd) {
             changeFont(1);
@@ -163,7 +163,7 @@ public final class ReaderCanvas extends Canvas implements CommandListener {
 
     public void onPause() {
         book.close();
-        mid.savePosition(name, book.getPageStart(), fontIdx, dark);
+        mid.savePosition(name, book.getPageStart(), fontIdx, dark, !book.hasNext());
     }
 
     private static int clampIdx(int i) {
