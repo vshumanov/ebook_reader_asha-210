@@ -18,8 +18,19 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
     private Sd sd;
 
     private List listScreen;
-    private String[] books = new String[0];
+    private String[] books = new String[0];   // what's currently shown, after sort+filter
     private Command openCmd, refreshCmd, exitCmd, diagCmd;
+    private Command allCmd, newCmd, progressCmd;
+
+    // reading status, used for sorting and the menu filters
+    private static final int ST_PROGRESS = 0;  // opened, not finished  -> top
+    private static final int ST_NEW = 1;       // never opened          -> middle
+    private static final int ST_DONE = 2;      // finished              -> bottom
+
+    private static final int FILTER_ALL = 0;
+    private static final int FILTER_NEW = 1;
+    private static final int FILTER_PROGRESS = 2;
+    private int filter = FILTER_ALL;
 
     private ReaderCanvas canvas;
 
@@ -79,24 +90,82 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
     public void showBookList() {
         canvas = null;
         sd.closeStream();
-        listScreen = new List("Books", List.IMPLICIT);
-        books = sd.listBooks();
+
+        // Sort all books by status (in-progress, then new, then done),
+        // then drop whatever the current filter hides.
+        books = arrange(sd.listBooks());
+
+        String title = (filter == FILTER_NEW) ? "Books - new"
+                     : (filter == FILTER_PROGRESS) ? "Books - reading"
+                     : "Books";
+        listScreen = new List(title, List.IMPLICIT);
         for (int i = 0; i < books.length; i++) {
             listScreen.append(label(books[i]), null);
         }
         if (books.length == 0) {
-            listScreen.append("(no books - add .txt to Books/ on card)", null);
+            listScreen.append(emptyMessage(), null);
         }
         openCmd = new Command("Open", Command.ITEM, 1);
-        refreshCmd = new Command("Refresh", Command.SCREEN, 2);
-        diagCmd = new Command("Diagnostics", Command.SCREEN, 3);
-        exitCmd = new Command("Exit", Command.EXIT, 4);
+        allCmd = new Command("Show all", Command.SCREEN, 2);
+        newCmd = new Command("Show new", Command.SCREEN, 3);
+        progressCmd = new Command("Show in progress", Command.SCREEN, 4);
+        refreshCmd = new Command("Refresh", Command.SCREEN, 5);
+        diagCmd = new Command("Diagnostics", Command.SCREEN, 6);
+        exitCmd = new Command("Exit", Command.EXIT, 7);
         listScreen.addCommand(openCmd);
+        if (filter != FILTER_ALL) listScreen.addCommand(allCmd);
+        if (filter != FILTER_NEW) listScreen.addCommand(newCmd);
+        if (filter != FILTER_PROGRESS) listScreen.addCommand(progressCmd);
         listScreen.addCommand(refreshCmd);
         listScreen.addCommand(diagCmd);
         listScreen.addCommand(exitCmd);
         listScreen.setCommandListener(this);
         display.setCurrent(listScreen);
+    }
+
+    /** Sort by status (in-progress, new, done) and apply the current filter. */
+    private String[] arrange(String[] all) {
+        // stable bucketing keeps each group in the order sd returned it
+        java.util.Vector prog = new java.util.Vector();
+        java.util.Vector fresh = new java.util.Vector();
+        java.util.Vector done = new java.util.Vector();
+        for (int i = 0; i < all.length; i++) {
+            switch (status(all[i])) {
+                case ST_PROGRESS: prog.addElement(all[i]); break;
+                case ST_DONE:     done.addElement(all[i]); break;
+                default:          fresh.addElement(all[i]); break;
+            }
+        }
+        java.util.Vector out = new java.util.Vector();
+        if (filter == FILTER_NEW) {
+            append(out, fresh);
+        } else if (filter == FILTER_PROGRESS) {
+            append(out, prog);
+        } else {
+            append(out, prog);
+            append(out, fresh);
+            append(out, done);
+        }
+        String[] result = new String[out.size()];
+        out.copyInto(result);
+        return result;
+    }
+
+    private static void append(java.util.Vector dst, java.util.Vector src) {
+        for (int i = 0; i < src.size(); i++) dst.addElement(src.elementAt(i));
+    }
+
+    private int status(String file) {
+        long[] st = (long[]) state.get(file);
+        if (st == null) return ST_NEW;
+        if (st.length > 3 && st[3] == 1) return ST_DONE;
+        return ST_PROGRESS;
+    }
+
+    private String emptyMessage() {
+        if (filter == FILTER_NEW) return "(no new books)";
+        if (filter == FILTER_PROGRESS) return "(nothing in progress)";
+        return "(no books - add .txt to Books/ on card)";
     }
 
     public void commandAction(Command c, Displayable d) {
@@ -105,9 +174,18 @@ public class ReaderMIDlet extends MIDlet implements CommandListener {
             notifyDestroyed();
         } else if (c == refreshCmd) {
             showBookList();
+        } else if (c == allCmd) {
+            filter = FILTER_ALL;
+            showBookList();
+        } else if (c == newCmd) {
+            filter = FILTER_NEW;
+            showBookList();
+        } else if (c == progressCmd) {
+            filter = FILTER_PROGRESS;
+            showBookList();
         } else if (c == diagCmd) {
             Alert a = new Alert("Diagnostics",
-                    "found " + books.length + " book(s)\n" + sd.getReport(),
+                    "found " + sd.listBooks().length + " book(s)\n" + sd.getReport(),
                     null, AlertType.INFO);
             a.setTimeout(Alert.FOREVER);
             display.setCurrent(a, listScreen);
